@@ -1,0 +1,15 @@
+name: somehow_i_manage
+description: A dart package making working with Isolates easier and manageable. It supports interprocess communication
+version: 1.0.2
+repository: https://github.com/bruc3balo/somehow_i_manager.git
+
+environment:
+  sdk: '>=3.0.0-241.0.dev <4.0.0'
+
+
+dependencies:
+  logger: ^1.1.0
+
+dev_dependencies:
+  lints: ^2.0.0
+  test: ^1.21.0
