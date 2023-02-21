@@ -1,3 +1,3 @@
-## 1.0.2
+## 1.1.3
 
-- Added worker communication in example
+- Very Minor changes

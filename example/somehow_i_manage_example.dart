@@ -1,55 +1,69 @@
-import 'package:somehow_i_manage/iso_implementation.dart';
 import 'package:somehow_i_manage/somehow_i_manage.dart';
 
-void main() {
-  IManager manager = IManager.create(name: "test-manager", log: true);
-  IWorker worker1 =
-      manager.addWorker("test-work-1", onReceiveMessage: (message) {
-    print("Worker1: Received message : ${message.info}");
-  }, onCancelMessageSubscription: () {
-    print("Worker1: Message cancelled");
-  }, onPauseMessageSubscription: () {
-    print("Worker1: Message paused");
-  }, onResumeMessageSubscription: () {
-    print("Worker1: Message resumed");
+class FizzBuzz {
+  final int n;
+  final bool? fizz;
+  final bool? buzz;
+
+  FizzBuzz(this.n, {this.fizz, this.buzz});
+
+  FizzBuzz copyWith({bool? fizz, bool? buzz}) {
+    return FizzBuzz(n, fizz: fizz ?? this.fizz, buzz: buzz ?? this.buzz);
+  }
+}
+
+Future<void> main() async {
+  IManager fizzbuzzManager =
+      IManager.create(name: "FizzBuzz Manager", log: true);
+
+  fizzbuzzManager.messageStream.listen((event) {
+    print(event);
   });
+  IWorker fizzWorker = await fizzbuzzManager.addWorker("Fizz");
 
-  IWorker worker2 =
-      manager.addWorker("test-work-2", onReceiveMessage: (message) {
-    print("Worker2: Received message : ${message.info}");
-  }, onCancelMessageSubscription: () {
-    print("Worker2: Message cancelled");
-  }, onPauseMessageSubscription: () {
-    print("Worker2: Message paused");
-  }, onResumeMessageSubscription: () {
-    print("Worker2: Message resumed");
-  });
+  IWorker fizzBuzzWorker = await fizzbuzzManager.addWorker("FizzBuzz",
+      onReceiveMessage: (message, worker) {
+    if (message.tag != null && message.tag == "FizzBuzz") {
+      FizzBuzz n = message.data as FizzBuzz;
 
-  IMessage message = IMessage.sendData(info: " Sending from test-work-1");
-  worker1.sendMessage(info: message.info, sendPort: worker2.workerSendPort);
+      String p = "";
 
-  worker2.addWork(() async {
-    for (int i = 0; i < 100; i++) {
-      print("Sending $i");
-      worker2.sendMessage<int>(
-          info: "Sending from ${worker2.name}",
-          data: i,
-          sendPort: worker1.workerSendPort);
-    }
-  }, onWorkStatusNotifier: (workStatus) {
-    switch (workStatus) {
-      case IWorkStatus.undone:
-        print("Work $workStatus");
-        break;
-      case IWorkStatus.active:
-        print("Work $workStatus");
-        break;
-      case IWorkStatus.done:
-        print("Work $workStatus");
-        break;
-      case IWorkStatus.failed:
-        print("Work $workStatus");
-        break;
+      if (n.fizz ?? false) {
+        p = "Fizz";
+      }
+
+      if (n.buzz ?? false) {
+        p = "${p}Buzz";
+      }
+
+      print("${n.n} : $p");
+      worker.sendMessage(
+          info: "${n.n} : $p", sendPort: fizzbuzzManager.managerSendPort);
     }
   });
+  IWorker buzzWorker = await fizzbuzzManager.addWorker("Buzz",
+      onReceiveMessage: (message, worker) {
+    if (message.tag != null && message.tag == "Buzz") {
+      FizzBuzz fizzBuzz = message.data as FizzBuzz;
+      bool buzz = fizzBuzz.n % 5 == 0;
+
+      worker.sendMessage(
+          info: "Sending Buzz ${fizzBuzz.n}",
+          tag: "FizzBuzz",
+          sendPort: fizzBuzzWorker.workerSendPort,
+          data: fizzBuzz.copyWith(buzz: buzz));
+    }
+  });
+
+  List<int> items = List.generate(100, (index) => index);
+  for (int i in items) {
+    //if fizz is divisible by 3 type fizz
+    bool fizz = i % 3 == 0;
+
+    fizzWorker.sendMessage(
+        info: "Sending Fizz $i",
+        tag: "Buzz",
+        sendPort: buzzWorker.workerSendPort,
+        data: FizzBuzz(i, fizz: fizz));
+  }
 }

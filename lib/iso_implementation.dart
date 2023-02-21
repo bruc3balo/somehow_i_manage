@@ -12,17 +12,20 @@ class IWorkerImpl extends IWorker {
       {required super.name,
       required super.managerSendPort,
       required super.errorSendPort,
+      required super.stateSendPort,
       super.onReceiveMessage,
       super.onCancelMessageSubscription,
       super.onPauseMessageSubscription,
-      super.onResumeMessageSubscription});
+      super.onResumeMessageSubscription,
+      super.onWorkerStateChange});
 }
 
 class IWorkerMessageImpl<T> extends IMessage<T> {
-  IWorkerMessageImpl(String info, IState state, {super.data})
-      : super(info, state);
+  IWorkerMessageImpl(IState state,
+      {super.info,
+      super.data,
+      super.tag,
+      required super.from,
+      required super.to})
+      : super(state);
 }
-
-enum IWorkStatus { undone, active, done, failed }
-
-enum IState { listen, cancel, pause }

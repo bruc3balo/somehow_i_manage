@@ -11,11 +11,42 @@ export 'package:logger/logger.dart';
 import 'dart:async';
 import 'dart:collection';
 import 'dart:isolate';
-import 'package:logger/logger.dart';
+import 'package:somehow_i_manage/somehow_i_manage.dart';
 
 import 'iso_implementation.dart';
 
 var _log = Logger();
+
+class _StreamKit<T> {
+  late final Stream<T> _stream;
+  late final StreamController<T> controller;
+  late final StreamSubscription<T> subscription;
+
+  _StreamKit(
+      {Stream<T>? stream,
+      Function(T message)? onListen,
+      Function()? onPause,
+      Function()? onResume,
+      Function()? onCancel}) {
+    controller = StreamController(
+      onResume: onResume,
+      onPause: onPause,
+      onCancel: onCancel,
+    );
+    _stream = stream ?? controller.stream;
+    subscription = _stream.listen((event) => onListen?.call(event));
+  }
+
+  Stream<T> get stream => controller.stream.asBroadcastStream().cast<T>();
+
+  void dispose() {
+    _stream.drain();
+    controller.close();
+    subscription.cancel();
+  }
+
+// _StreamKit(StreamController<T>)
+}
 
 //Work
 class IWork {
@@ -43,38 +74,63 @@ class IWork {
 
 //Classes
 abstract class IMessage<T> {
-  const IMessage(this.info, this.state, {this.data});
+  const IMessage(this.state,
+      {this.info, this.data, this.tag, required this.from, required this.to});
 
-  final String info;
+  final String? info;
+  final String? tag;
   final T? data;
   final IState state;
+  final SendPort from;
+  final SendPort to;
 
   @override
-  String toString() => "{info: $info, state : $state, data: $data}";
+  String toString() => "{info: $info, tag:$tag state : $state, data: $data";
 
-  static IMessage<T> _stop<T>({
-    String? info,
-    T? data,
-  }) {
-    return IWorkerMessageImpl<T>(info ?? "Stopping worker", IState.cancel,
-        data: data);
+  static IMessage<T> createDataMessage<T>(
+      {String? info,
+      String? tag,
+      T? data,
+      required SendPort from,
+      required SendPort to}) {
+    return IWorkerMessageImpl(
+        info: info ?? "Sending data message",
+        IState.listen,
+        data: data,
+        tag: tag,
+        from: from,
+        to: to);
   }
 
-  static IMessage<T> sendData<T>({String? info, T? data}) {
-    return IWorkerMessageImpl(info ?? "Sending data message", IState.listen,
-        data: data);
+  static IMessage<T> _error<T>(
+      {String? info, T? data, required SendPort from, required SendPort to}) {
+    return IWorkerMessageImpl(
+        info: info ?? "Error", IState.listen, data: data, from: from, to: to);
   }
 
-  static IMessage<T> _error<T>({String? info, T? data}) {
-    return IWorkerMessageImpl(info ?? "Error", IState.listen, data: data);
+  static IMessage<T> _cancel<T>(
+      {required String name,
+      T? data,
+      required SendPort from,
+      required SendPort to}) {
+    return IWorkerMessageImpl<T>(
+        info: "Stopping worker $name",
+        IState.cancel,
+        data: data,
+        from: from,
+        to: to);
   }
 
-  static IMessage<dynamic> _pause({String? info}) {
-    return IWorkerMessageImpl(info ?? "Pausing worker", IState.pause);
+  static IMessage<dynamic> _pause(
+      {required String name, required SendPort from, required SendPort to}) {
+    return IWorkerMessageImpl(
+        info: "Pausing worker $name", IState.pause, from: from, to: to);
   }
 
-  static IMessage<dynamic> _resume({String? info}) {
-    return IWorkerMessageImpl(info ?? "Resuming worker", IState.listen);
+  static IMessage<dynamic> _resume(
+      {required String name, required SendPort from, required SendPort to}) {
+    return IWorkerMessageImpl(
+        info: "Resuming worker $name", IState.listen, from: from, to: to);
   }
 }
 
@@ -84,54 +140,61 @@ abstract class IManager {
     required bool log,
   }) {
     _logging = log;
-    managerReceivePort = ReceivePort(name);
-    _errorReceivePort = ReceivePort("Error");
-    _allMessageStream = StreamController<IMessage<dynamic>>();
-    _errorStream = StreamController<IMessage<dynamic>>();
+    _managerReceivePort = ReceivePort(name);
+    _errorReceivePort = ReceivePort("$name:error");
+    _stateReceivePort = ReceivePort("$name:state");
+
+    _errorsKit = _StreamKit(
+        stream: _errorReceivePort.asBroadcastStream().cast(),
+        onListen: (e) => _onErrorMessage(e));
+    _allMessagesKit = _StreamKit(
+        stream: _managerReceivePort.asBroadcastStream().cast(),
+        onListen: (m) => _onReceiveMessage(m));
+    _stateKit = _StreamKit(
+        stream: _stateReceivePort.asBroadcastStream().cast(),
+        onListen: (s) => _onStateMessage(s));
     _init();
   }
 
   //Meta IManager
   final String name;
   late final bool _logging;
-  late final ReceivePort managerReceivePort;
+  late final ReceivePort _managerReceivePort;
   late final ReceivePort _errorReceivePort;
+  late final ReceivePort _stateReceivePort;
+
+  SendPort get managerSendPort => _managerReceivePort.sendPort;
 
   //Workers
   final HashMap<String, IWorker> _workers = HashMap();
 
   //Messages
-  late final StreamSubscription<IMessage<dynamic>> _allMessageSubscription;
-  late final StreamController<IMessage<dynamic>> _allMessageStream;
+  late final _StreamKit<dynamic> _allMessagesKit;
+  Stream<IMessage<dynamic>> get messageStream => _allMessagesKit._stream.cast();
 
-  //Messages getters
-  SendPort get managerSendPort => managerReceivePort.sendPort;
-  Stream<IMessage<dynamic>> get messageStream => _allMessageStream.stream;
-  Stream<IMessage<dynamic>> get _allMessages =>
-      managerReceivePort.asBroadcastStream().cast<IMessage<dynamic>>();
+  //Errors
+  late final _StreamKit<dynamic> _errorsKit;
+  Stream<IMessage<dynamic>> get errorStream => _errorsKit._stream.cast();
 
-  //error
-  late final StreamSubscription<IMessage<dynamic>> _errorSubscription;
-  late final StreamController<IMessage<dynamic>> _errorStream;
-  //error getters
-  Stream<IMessage<dynamic>> get errorStream => _allMessageStream.stream;
-  Stream<IMessage<dynamic>> get _allErrors =>
-      managerReceivePort.asBroadcastStream().cast<IMessage<dynamic>>();
+  //State
+  late final _StreamKit<dynamic> _stateKit;
+  Stream<IMessage<dynamic>> get stateStream => _stateKit._stream.cast();
 
   static IManager create({String? name, bool? log}) {
     return IManagerImpl(name: name, log: log);
   }
 
   //Workers
-  IWorker addWorker(String name,
-      {dynamic Function(IMessage<dynamic>)? onReceiveMessage,
-      dynamic Function()? onCancelMessageSubscription,
-      dynamic Function()? onPauseMessageSubscription,
-      dynamic Function()? onResumeMessageSubscription}) {
+  Future<IWorker> addWorker(String name,
+      {dynamic Function(IMessage<dynamic>, IWorker worker)? onReceiveMessage,
+      dynamic Function(IWorker worker)? onCancelMessageSubscription,
+      dynamic Function(IWorker worker)? onPauseMessageSubscription,
+      dynamic Function(IWorker worker)? onResumeMessageSubscription}) async {
     if (_isWorkerPresent(name)) throw Exception("Worker already present");
-    IWorker isoWorker = IWorker._create(
-        name, managerSendPort, _errorReceivePort.sendPort,
+    IWorker isoWorker = IWorker._create(name, managerSendPort,
+        _errorReceivePort.sendPort, _stateReceivePort.sendPort,
         onReceiveMessage: onReceiveMessage);
+    await isoWorker._createIsolate();
     _workers.putIfAbsent(name, () => isoWorker);
     return isoWorker;
   }
@@ -151,36 +214,57 @@ abstract class IManager {
   }
 
   //Logging Listener
-  void _addLogListener() {
+  void _setLogLevel() {
     Logger.level = _logging ? Level.warning : Level.info;
   }
 
-  void _removeLogListener() {
-    _log.close();
-  }
-
   //Message Listener
-  void _addMessageListener() {
-    _allMessageSubscription = _allMessageStream.stream.listen((message) async {
-      if (_logging) {
-        _log.i(message.info);
-      }
-    });
+
+  void _onReceiveMessage(IMessage message) {
+    if (_logging) {
+      _log.i(message.info);
+    }
   }
 
   void _removeMessageListener() {
-    _allMessageSubscription.cancel();
+    _allMessagesKit.dispose();
   }
 
   void _removeErrorListener() {
-    _errorSubscription.cancel();
+    _errorsKit.dispose();
   }
 
-  //Errors
-  void _addErrorListener() {
-    _errorSubscription = _errorStream.stream.listen((error) {
-      _log.e(error.info, [error.info, error.data]);
-    });
+  void _removeStateListener() {
+    _stateKit.dispose();
+  }
+
+  //state
+  void _onStateMessage(IMessage message) {
+    String w = message.data;
+    IWorker? worker = getWorker(w);
+    if (worker == null) {
+      _log.w("Worker not found");
+      return;
+    }
+
+    switch (message.state) {
+      case IState.listen:
+        worker.resume();
+        break;
+      case IState.cancel:
+        worker.dispose();
+        _workers.remove(w);
+        break;
+      case IState.pause:
+        worker.pause();
+        break;
+    }
+  }
+
+  void _onErrorMessage(IMessage message) {
+    if (_logging) {
+      _log.i(message.info);
+    }
   }
 
   @override
@@ -188,15 +272,13 @@ abstract class IManager {
 
   //Lifecycle
   void _init() {
-    _addLogListener();
-    _addMessageListener();
-    _addErrorListener();
+    _setLogLevel();
   }
 
   void dispose() {
-    _removeLogListener();
     _removeMessageListener();
     _removeErrorListener();
+    _removeStateListener();
   }
 }
 
@@ -205,140 +287,176 @@ abstract class IWorker {
       {required this.name,
       required this.managerSendPort,
       required this.errorSendPort,
-      dynamic Function(IMessage workerMessage)? onReceiveMessage,
-      dynamic Function()? onCancelMessageSubscription,
-      dynamic Function()? onPauseMessageSubscription,
-      dynamic Function()? onResumeMessageSubscription}) {
-    Isolate.spawn((_) => _addWorkListener(), managerSendPort)
-        .then((iso) => {_workerIsolate = iso, _init()});
+      required this.stateSendPort,
+      dynamic Function(IMessage<dynamic> message, IWorker worker)?
+          onReceiveMessage,
+      dynamic Function(IWorker worker)? onCancelMessageSubscription,
+      dynamic Function(IWorker worker)? onPauseMessageSubscription,
+      dynamic Function(IWorker worker)? onResumeMessageSubscription,
+      this.onWorkerStateChange}) {
     workerReceivePort = ReceivePort(name);
-    _onWorkerMessage = onReceiveMessage;
+
+    _workerMessagesKit = _StreamKit(
+        stream: workerReceivePort.asBroadcastStream().cast(),
+        onListen: (message) => onReceiveMessage?.call(message, this));
+
+    _workKit = _StreamKit<IWork>(
+        onCancel: () => sendMessage(
+            info: "$name work cancelled", sendPort: managerSendPort),
+        onPause: () =>
+            sendMessage(info: "$name work paused", sendPort: managerSendPort),
+        onResume: () =>
+            sendMessage(info: "$name work resumed", sendPort: managerSendPort));
   }
 
   //IWorker meta
   final String name;
   late final ReceivePort workerReceivePort;
   late final SendPort errorSendPort;
+  late final SendPort stateSendPort;
+
   SendPort get workerSendPort => workerReceivePort.sendPort;
   final SendPort managerSendPort;
-  late final Function(IMessage workerMessage)? _onWorkerMessage;
+
+  //Messaging
+  late final _StreamKit<IMessage<dynamic>> _workerMessagesKit;
+  Stream<IMessage<dynamic>> get workerMessageStream =>
+      _workerMessagesKit._stream.cast();
+
+  //Messaging state
+  final StreamController<IState> _workerMessageState = StreamController()
+    ..add(IState.listen);
+  Future<IState> get workerMessageState async =>
+      (await _workerMessageState.stream.first);
+
+  //Worker state
+  late final StreamController<IState> _workerState = StreamController()
+    ..add(IState.listen);
+  Future<IState> get workerState async => (await _workerState.stream.first);
+  dynamic Function(IState state, IWorker worker)? onWorkerStateChange;
 
   //work
-  late final StreamController<IWork> _work = StreamController(
-      onCancel: () => sendMessage(info: "$name work cancelled"),
-      onListen: () => sendMessage(info: "$name work listening"),
-      onPause: () => sendMessage(info: "$name work paused"),
-      onResume: () => sendMessage(info: "$name work resumed"));
-  late final StreamSubscription<IWork> _workController;
-
-  static IWorker _create(
-      String name, SendPort managerSendPort, SendPort errorSendPort,
-      {Function(IMessage workerMessage)? onReceiveMessage,
-      dynamic Function()? onCancelMessageSubscription,
-      dynamic Function()? onPauseMessageSubscription,
-      dynamic Function()? onResumeMessageSubscription}) {
-    return IWorkerImpl(
-        name: name,
-        managerSendPort: managerSendPort,
-        errorSendPort: errorSendPort,
-        onReceiveMessage: onReceiveMessage,
-        onCancelMessageSubscription: onCancelMessageSubscription,
-        onPauseMessageSubscription: onPauseMessageSubscription,
-        onResumeMessageSubscription: onResumeMessageSubscription);
-  }
-
-  //messages
-  final StreamController<IMessage<dynamic>> _messageStream =
-      StreamController<IMessage<dynamic>>();
-  late final StreamSubscription<IMessage<dynamic>> _workerMessagesSubscription;
-  final StreamController<IState> _messageState = StreamController()
-    ..add(IState.listen);
-
-  Future<IState> get messageState async => await _messageState.stream.first;
-  late final Stream<IMessage<dynamic>> workerMessages =
-      workerReceivePort.asBroadcastStream().cast<IMessage<dynamic>>();
-
-  //state
-  final StreamController<IState> _state = StreamController()
-    ..add(IState.listen);
-  Future<IState> get state async => await _state.stream.first;
+  late final _StreamKit<IWork> _workKit;
 
   //isolate
   late final Isolate _workerIsolate;
 
+  static IWorker _create(String name, SendPort managerSendPort,
+      SendPort errorSendPort, SendPort stateSendPort,
+      {dynamic Function(IMessage<dynamic>, IWorker worker)? onReceiveMessage,
+      dynamic Function(IWorker worker)? onCancelMessageSubscription,
+      dynamic Function(IWorker worker)? onPauseMessageSubscription,
+      dynamic Function(IWorker worker)? onResumeMessageSubscription,
+      dynamic Function(IState state, IWorker worker)? onWorkerStateChange}) {
+    return IWorkerImpl(
+      name: name,
+      managerSendPort: managerSendPort,
+      errorSendPort: errorSendPort,
+      stateSendPort: stateSendPort,
+      onReceiveMessage: onReceiveMessage,
+      onCancelMessageSubscription: onCancelMessageSubscription,
+      onPauseMessageSubscription: onPauseMessageSubscription,
+      onResumeMessageSubscription: onResumeMessageSubscription,
+      onWorkerStateChange: onWorkerStateChange,
+    );
+  }
+
+  Future<void> _createIsolate() async {
+    try {
+      _workerIsolate = await Isolate.spawn(
+          (_) => _workKit.stream.listen((work) => _doWork(work)), null);
+      _init();
+    } catch (e, trace) {
+      _sendError(info: e.toString(), data: trace);
+    }
+  }
+
   //messages
-  void _addInterWorkerMessageListener() {
-    _workerMessagesSubscription = workerMessages
-        .listen((message) async => _onWorkerMessage?.call(message));
+  Future<void> pauseMessageListening() async {
+    IState iState = await workerMessageState;
+
+    switch (iState) {
+      case IState.listen:
+        _pauseMessage();
+        break;
+      case IState.cancel:
+        throw Exception("Message subscription has already been cancelled");
+      case IState.pause:
+        throw Exception("Message subscription has already been paused");
+    }
   }
 
-  void pauseMessageListening() {
-    messageState.then((mState) {
-      switch (mState) {
-        case IState.listen:
-          _workerMessagesSubscription.pause();
-          _messageState.add(IState.pause);
-          break;
-        case IState.cancel:
-          throw Exception("Message subscription has already been cancelled");
-        case IState.pause:
-          throw Exception("Message subscription has already been paused");
-      }
-    });
+  void _pauseMessage() {
+    _workerMessagesKit.subscription.pause();
+    _workerMessageState.add(IState.pause);
   }
 
-  void resumeMessageListening() {
-    messageState.then((mState) {
-      switch (mState) {
-        case IState.listen:
-          throw Exception("Message subscription is already listening");
+  Future<void> resumeMessageListening() async {
+    IState iState = await workerMessageState;
 
-        case IState.cancel:
-          throw Exception("Message subscription has already been cancelled");
-        case IState.pause:
-          _workerMessagesSubscription.resume();
-          _messageState.add(IState.listen);
-          break;
-      }
-    });
+    switch (iState) {
+      case IState.listen:
+        throw Exception("Message subscription is already listening");
+
+      case IState.cancel:
+        throw Exception("Message subscription has already been cancelled");
+      case IState.pause:
+        _resumeMessage();
+        break;
+    }
+  }
+
+  void _resumeMessage() {
+    _workerMessagesKit.subscription.resume();
+    _workerMessageState.add(IState.listen);
   }
 
   Future<void> cancelMessageListening() async {
-    IState iState = await messageState;
+    IState iState = await workerMessageState;
     if (iState == IState.cancel) {
       throw Exception("Message subscription has already been cancelled");
     }
-    _workerMessagesSubscription.cancel();
-    _messageState.add(IState.cancel);
+
+    _cancelMessage();
+  }
+
+  void _cancelMessage() {
+    _workerMessagesKit.subscription.cancel();
+    _workerMessageState.add(IState.cancel);
   }
 
   //work
-  void _addWorkListener() {
-    _workController = _work.stream.listen((work) async => _doWork(work));
-  }
+  Future<void> _doWork(IWork? work) async {
+    if (work == null) {
+      sendMessage(info: "Null work", sendPort: managerSendPort);
+      return;
+    }
 
-  Future<void> _doWork(IWork work) async {
-    sendMessage(info: "Starting work ${work.name}");
+    sendMessage(info: "Starting work ${work.name}", sendPort: managerSendPort);
     work.setStatus(IWorkStatus.active);
     await work.work.call().then((_) {
-      sendMessage(info: "Finished work ${work.name}");
+      sendMessage(
+          info: "Finished work ${work.name}", sendPort: managerSendPort);
       work.setStatus(IWorkStatus.done);
     }).catchError((e, trace) {
       work.setStatus(IWorkStatus.failed);
-      sendMessage(info: "Failed work ${work.name}", data: work);
-      sendError(info: e.toString(), data: trace);
+      sendMessage(
+          info: "Failed work ${work.name}",
+          data: work,
+          sendPort: managerSendPort);
+      _sendError(info: e.toString(), data: trace);
     });
   }
 
   void _removeWorkListener() {
-    _workController.cancel();
-    _work.close();
+    _workKit.subscription.cancel();
+    _workKit.controller.close();
   }
 
   void addWork(Future<dynamic> Function() work,
       {Function(IWorkStatus workStatus)? onWorkStatusNotifier}) {
     IWork newWork = IWork(work, onWorkStatusNotifier: onWorkStatusNotifier);
-    _work.sink.add(newWork);
+    _workKit.controller.add(newWork);
   }
 
   //isolate
@@ -352,8 +470,9 @@ abstract class IWorker {
   }
 
   void _addExitListener() {
-    IMessage message = IMessage._stop(info: "$name exited");
-    // _workerIsolate.addOnExitListener(managerSendPort, response: message);
+    IMessage message =
+        IMessage._cancel(from: workerSendPort, to: managerSendPort, name: name);
+    _workerIsolate.addOnExitListener(managerSendPort);
   }
 
   void _removeExitListener() {
@@ -361,67 +480,92 @@ abstract class IWorker {
   }
 
   //state
-  void addStateChangeListener() {}
+  void _addStateChangeListener() {
+    _workerState.stream
+        .listen((state) => onWorkerStateChange?.call(state, this));
+  }
 
   Future<void> pause() async {
-    IState status = await state;
+    IState status = await workerState;
     switch (status) {
       case IState.cancel:
         throw Exception("Worker has been cancelled");
       case IState.pause:
-        sendMessage(info: "$name isolate has already been paused");
+        sendMessage(
+            info: "$name isolate has already been paused",
+            sendPort: workerSendPort);
         break;
       case IState.listen:
-        _state.add(IState.pause);
-        _workController.pause();
+        _pause();
         break;
     }
+  }
+
+  void _pause() {
+    _workerMessageState.add(IState.pause);
+    _workKit.subscription.pause();
   }
 
   Future<void> resume() async {
-    IState status = await state;
+    IState status = await workerState;
 
     switch (status) {
       case IState.listen:
-        sendMessage(info: "$name isolate has not been paused");
+        sendMessage(
+            info: "$name isolate has not been paused",
+            sendPort: managerSendPort);
         break;
       case IState.cancel:
         throw Exception("Worker has been cancelled");
       case IState.pause:
-        _state.add(IState.listen);
-        _workController.resume();
+        _resume();
         break;
     }
   }
 
-  Future<void> cancel({String initiator = "Anonymous"}) async {
-    IState status = await state;
+  void _resume() {
+    _workerMessageState.add(IState.listen);
+    _workKit.subscription.resume();
+  }
 
+  Future<void> cancel({String initiator = "Anonymous"}) async {
+    IState status = await workerState;
     if (status == IState.cancel) {
       throw Exception("Worker has been cancelled");
     }
-    _state.add(IState.cancel);
-    _removeWorkListener();
-    IMessage message =
-        IMessage._stop(info: "$name isolate killed by $initiator");
-    Isolate.exit(managerSendPort, message);
+    dispose();
   }
 
   //messages
   IMessage<T> sendMessage<T>(
-      {required String info, T? data, SendPort? sendPort}) {
-    SendPort port = sendPort ?? managerSendPort;
-    IMessage<T> message = IMessage.sendData(info: info, data: data);
-    port.send(message);
+      {String? info, T? data, String? tag, required SendPort sendPort}) {
+    IMessage<T> message = IMessage.createDataMessage(
+        info: info, data: data, tag: tag, from: workerSendPort, to: sendPort);
+    sendPort.send(message);
     return message;
   }
 
-  IMessage<T> sendError<T>(
-      {required String info, T? data, SendPort? sendPort}) {
-    SendPort port = sendPort ?? errorSendPort;
-    IMessage<T> message = IMessage._error(info: info, data: data);
-    port.send(message);
+  IMessage<T>? reply<T>({String? info, T? data, required IMessage message}) {
+    IMessage<T> m = IMessage.createDataMessage(
+        info: info,
+        data: data,
+        tag: message.tag,
+        from: workerSendPort,
+        to: message.from);
+    message.from.send(m);
+    return m;
+  }
+
+  IMessage<T> _sendError<T>({required String info, T? data}) {
+    IMessage<T> message = IMessage._error(
+        info: info, data: data, from: workerSendPort, to: errorSendPort);
+    errorSendPort.send(message);
     return message;
+  }
+
+  IMessage<T> _sendMessage<T>() {
+    return IMessage._cancel(
+        name: name, from: workerSendPort, to: managerSendPort);
   }
 
   @override
@@ -429,8 +573,7 @@ abstract class IWorker {
 
   //Lifecycle
   void _init() {
-    _addInterWorkerMessageListener();
-    _addWorkListener();
+    _addStateChangeListener();
     _addExitListener();
     _addErrorListener();
   }
@@ -439,5 +582,6 @@ abstract class IWorker {
     _removeWorkListener();
     _removeExitListener();
     _removeErrorListener();
+    Isolate.exit(stateSendPort, _sendMessage());
   }
 }

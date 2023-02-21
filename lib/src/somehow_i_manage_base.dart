@@ -1,6 +1,5 @@
-// TODO: Put public facing types in this file.
+// Put public facing types in this file.
 
-/// Checks if you are awesome. Spoiler: you are.
-class Awesome {
-  bool get isAwesome => true;
-}
+enum IWorkStatus { undone, active, done, failed }
+
+enum IState { listen, cancel, pause }
