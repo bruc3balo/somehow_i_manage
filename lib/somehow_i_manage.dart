@@ -26,14 +26,20 @@ class _StreamKit<T> {
       Function()? onPause,
       Function()? onResume,
       Function()? onCancel}) {
+
     controller = StreamController.broadcast(
       onCancel: onCancel,
     );
-    _stream = stream ?? controller.stream;
-    subscription = _stream.listen((event) => onListen?.call(event));
+    _stream = stream?.asBroadcastStream() ?? controller.stream;
+    subscription = _stream.listen((event) => {
+      print(event.runtimeType),
+      onListen?.call(event)
+    });
+
+
   }
 
-  Stream<T> get stream => controller.stream.asBroadcastStream().cast<T>();
+  Stream<T> get stream => _stream.asBroadcastStream().cast<T>();
 
   void dispose() {
     _stream.drain();
@@ -42,8 +48,9 @@ class _StreamKit<T> {
   }
 }
 
-//Work
+///Work
 class IWork {
+
   IWork(this.work, {this.name = "anonymous", this.onWorkStatusNotifier}) {
     _statusController.stream.listen((status) {
       onWorkStatusNotifier?.call(status);
@@ -64,10 +71,11 @@ class IWork {
 
   @override
   String toString() => "{name : $name, status : $status}";
+
 }
 
-//Classes
-abstract class IMessage<T> {
+///Classes
+abstract class IMessage<T>{
   const IMessage(this.state,
       {this.info,
       this.data,
@@ -211,7 +219,7 @@ abstract class IManager {
   final HashMap<String, IWorker> _workers = HashMap();
 
   //Messages
-  late final _StreamKit<dynamic> _allMessagesKit;
+  late final _StreamKit<IMessage<dynamic>> _allMessagesKit;
   Stream<IMessage<dynamic>> get messageStream => _allMessagesKit._stream.cast();
 
   //Errors
@@ -314,6 +322,18 @@ abstract class IManager {
   //Lifecycle
   void _init() {
     _setLogLevel();
+    if (_logging) {
+      _managerReceivePort.sendPort.send(IMessage.createDataMessage(
+          name: name,
+          from: managerSendPort,
+          to: managerSendPort,
+          data: "$name created"));
+      // _allMessagesKit.controller.add(IMessage.createDataMessage(
+      //     name: name,
+      //     from: managerSendPort,
+      //     to: managerSendPort,
+      //     data: "$name created"));
+    }
   }
 
   void dispose() {
