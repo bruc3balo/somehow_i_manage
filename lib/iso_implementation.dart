@@ -25,6 +25,7 @@ class IWorkerMessageImpl<T> extends IMessage<T> {
       {super.info,
       super.data,
       super.tag,
+      required super.name,
       required super.from,
       required super.to})
       : super(state);
