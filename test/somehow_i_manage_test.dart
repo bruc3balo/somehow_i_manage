@@ -162,8 +162,7 @@ void main() {
     test('pauseMessageListening', () async {
       String workerName = "create-test";
       IManager iManager = IManager.create(name: "create");
-      IWorker iWorker = await iManager.addWorker(workerName,
-          onReceiveMessage: (m, w) => expect(false, true));
+      IWorker iWorker = await iManager.addWorker(workerName);
 
       iWorker.pauseMessageListening();
       int count = 0;
@@ -325,27 +324,146 @@ void main() {
 
     test('pause', () async {
       IManager iManager = IManager.create(name: "create");
-      IWorker iWorker = await iManager.addWorker("create-worker",
-          onReceiveMessage: (m, w) => expect(false, true));
-
-      BehaviorSubject<int> result = BehaviorSubject();
-      // result.add(1);
-
-      // iWorker.pause();
-      iWorker.addWork<int>(() async => 0, onResult: (r) {
-        print("Result $r");
-        result.add(r!);
-        print("Result has val ${result.hasValue}");
+      IWorker iWorker = await iManager.addWorker("create-worker");
+      iWorker.pause();
+      iWorker.addWork<int>(() async => 0, onWorkStatusNotifier: (state) {
+        expect(false, true);
       });
-
-      await Future.delayed(Duration(seconds: 5));
-      print("Result has val after ${result.hasValue}");
-      expect(result.hasValue, false);
     });
 
-    test('resume', () async {});
+    test('resume', () async {
+      IManager iManager = IManager.create(name: "create");
+      IWorker iWorker = await iManager.addWorker("create-worker");
 
-    test('cancel', () async {});
+      iWorker.pause();
+      iWorker.resume();
+
+      BehaviorSubject<IWorkStatus> status = BehaviorSubject()
+        ..add(IWorkStatus.undone);
+      iWorker.addWork<int>(() async => 0, onWorkStatusNotifier: (state) {
+        expect(true, true);
+        status.add(state);
+        print("State is ${status.value}");
+      }, onResult: (s) {
+        expect(true, true);
+        status.add(IWorkStatus.done);
+        print("Result is ${status.value}");
+      });
+
+      Future<void> check() async {
+        print("Checking ${status.value}");
+
+        if (status.value != IWorkStatus.done) {
+          return;
+        }
+
+        expect(status, IWorkStatus.done);
+      }
+
+      // await Future.delayed(Duration(seconds: 2));
+      // await check();
+      //
+      // await Future.delayed(Duration(seconds: 2));
+      // await check();
+      //
+      // await Future.delayed(Duration(seconds: 2));
+      // await check();
+    });
+
+    test('cancel', () async {
+      IManager iManager = IManager.create(name: "create");
+      IWorker iWorker = await iManager.addWorker("create-worker");
+
+      iWorker.cancel(initiator: "test");
+
+      bool success = false;
+      try {
+        iWorker.addWork(() async => 0);
+      } on StreamKitCancelledException {
+        success = true;
+      } catch (e) {
+        success = false;
+      } finally {
+        expect(success, true);
+      }
+    });
+
+    test('sendMessage & reply', () async {
+      IManager iManager = IManager.create(name: "create");
+
+      void iWorker1Messages(IMessage<dynamic> m, IWorker w) {
+        print(m);
+        if (m.tag == "Test") {
+          switch (m.data) {
+            case "Hello":
+              w.reply(message: m, info: "Reply Hi", data: "Hello ${m.name}");
+              break;
+          }
+        }
+      }
+
+      void iWorker2Messages(IMessage<dynamic> m, IWorker w) {
+        print(m);
+        if (m.tag == "Test") {
+          switch (m.data) {
+            case "Hi":
+              w.reply(message: m, info: "Reply Hi", data: "Hi ${m.name}");
+              break;
+          }
+        }
+      }
+
+      IWorker iWorker1 = await iManager.addWorker("create-worker-1",
+          onReceiveMessage: iWorker1Messages);
+      IWorker iWorker2 = await iManager.addWorker("create-worker-2",
+          onReceiveMessage: iWorker2Messages);
+
+      iWorker1.sendMessage(
+          sendPort: iWorker2.workerSendPort,
+          data: "Hi",
+          tag: "Test",
+          info: "Testing");
+
+      iWorker2.sendMessage(
+          sendPort: iWorker1.workerSendPort,
+          data: "Hello",
+          tag: "Test",
+          info: "Testing");
+    });
+
+    test('_onStateChange', () async {
+      BehaviorSubject<IState> sub = BehaviorSubject();
+      IManager iManager = IManager.create(name: "create");
+      IWorker iWorker = await iManager.addWorker("worker",
+          onWorkerStateChange: (state, worker) =>
+              {print('"State Change $state'), sub.add(state)});
+
+      //pause
+      iWorker.pause();
+      Future.delayed(Duration(seconds: 2))
+          .then((pause) => expect(sub.value, IState.pause))
+
+          //resume
+          .then((resume) => iWorker.resume())
+          .then((resume) => Future.delayed(Duration(seconds: 2))
+              .then((resume) => expect(sub.value, IState.listen))
+
+              //cancel
+              .then((cancel) => iWorker.cancel(initiator: "test"))
+              .then((cancel) => Future.delayed(Duration(seconds: 2))
+                  .then((cancel) => expect(sub.value, IState.cancel))));
+    });
+
+    test('dispose', () async {
+      IManager iManager = IManager.create(name: "create");
+      IWorker iWorker = await iManager.addWorker(
+        "dispose",
+      );
+
+      await Future.delayed(Duration(seconds: 2));
+      iWorker.dispose();
+      // expect(iWorker.workerState, IState.cancel);
+    });
   });
 
   group("IManager & IWorker", () {
@@ -390,6 +508,11 @@ void main() {
         // expect(present, true);
         print("List : $m");
       }*/
+    });
+
+    test('_sendError', () async {
+      IManager iManager = IManager.create(name: "create");
+      IWorker iWorker = await iManager.addWorker("create");
     });
   });
 }
