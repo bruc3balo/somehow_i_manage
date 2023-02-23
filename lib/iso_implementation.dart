@@ -3,8 +3,8 @@ import 'package:somehow_i_manage/somehow_i_manage.dart';
 class IManagerImpl extends IManager {
   IManagerImpl({
     String? name,
-    bool? log,
-  }) : super(name: name ?? "IsoManager", log: log ?? false);
+    Level? logLevel,
+  }) : super(name: name ?? "IsoManager", logLevel: logLevel ?? Level.error);
 }
 
 class IWorkerImpl extends IWorker {
@@ -30,4 +30,14 @@ class IWorkerMessageImpl<T> extends IMessage<T> {
       required super.from,
       required super.to})
       : super(state);
+}
+
+class IWorkerPresentException extends IException {
+  IWorkerPresentException(String message, {dynamic trace})
+      : super(message, trace: trace);
+}
+
+class StreamKitCancelledException extends IException {
+  StreamKitCancelledException(String message, {dynamic trace})
+      : super(message, trace: trace);
 }

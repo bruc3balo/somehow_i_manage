@@ -14,7 +14,7 @@ class FizzBuzz {
 
 Future<void> main() async {
   IManager fizzbuzzManager =
-      IManager.create(name: "FizzBuzz Manager", log: true);
+      IManager.create(name: "FizzBuzz Manager", logLevel: Level.info);
 
   IWorker fizzWorker = await fizzbuzzManager.addWorker("Fizz");
 
