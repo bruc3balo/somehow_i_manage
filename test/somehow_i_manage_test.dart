@@ -29,20 +29,46 @@ void main() {
           to: iManager.managerSendPort,
           data: "${iManager.name} created");
       iManager.managerSendPort.send(adam);
-
-      List<IMessage> message = await iManager.messageStream.toList();
-      print(message.length);
-
     });
   });
 
   group("IWorker", () {
+    test('Create Worker "create"', () async {
+      String workerName = "create-test";
+      IManager iManager = IManager.create(name: "create", log: true);
+      IWorker iWorker = await iManager.addWorker(workerName);
+      expect(iManager.getWorker(workerName), iWorker);
+    });
+    test('isWorkerPresent', () async {
+      String workerName = "create-test";
+      IManager iManager = IManager.create(name: "create", log: true);
+      IWorker iWorker = await iManager.addWorker(workerName);
 
+      expect(iManager.isWorkerPresent(workerName), true);
+      expect(iManager.isWorkerPresent(iWorker.name), true);
+      expect(iManager.isWorkerPresent("create"), false);
+    });
+    test('getWorker', () async {
+      String workerName = "create-test";
+      IManager iManager = IManager.create(name: "create", log: true);
+      IWorker iWorker = await iManager.addWorker(workerName);
+
+      expect(iManager.getWorker(workerName), iWorker);
+      expect(iManager.getWorker(iWorker.name), iWorker);
+      expect(iManager.getWorker("create"), null);
+    });
+    test('killAllWorker', () async {
+      String workerName = "create-test";
+      IManager iManager = IManager.create(name: "create", log: true);
+      IWorker iWorker = await iManager.addWorker(workerName);
+
+      expect(iManager.getWorker(iWorker.name), iWorker);
+
+      //todo endless
+      await iManager.killAllWorker();
+      // expect(iManager.getWorker(iWorker.name), null);
+    });
   });
 
-  group("IManager & IWorker", () {
-
-  });
-
-
+  group("IManager & IWorker", () {});
 }

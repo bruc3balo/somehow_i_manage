@@ -15,6 +15,7 @@ class IWorkerImpl extends IWorker {
       required super.stateSendPort,
       super.onReceiveMessage,
       super.onCancelMessageSubscription,
+      required super.logging,
       super.onPauseMessageSubscription,
       super.onResumeMessageSubscription,
       super.onWorkerStateChange});
