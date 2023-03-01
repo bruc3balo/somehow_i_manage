@@ -12,7 +12,7 @@ class FizzBuzz {
   }
 }
 
-Future<void> main() async {
+/*Future<void> main() async {
   IManager fizzbuzzManager =
       IManager.create(name: "FizzBuzz Manager", logLevel: Level.info);
 
@@ -35,7 +35,7 @@ Future<void> main() async {
 
       print("${n.n} : $p");
       worker.sendMessage(
-          info: "${n.n} : $p", sendPort: fizzbuzzManager.managerSendPort);
+          info: "${n.n} : $p", sendPort: fizzbuzzManager.messageSendPort);
     }
   });
 
@@ -48,13 +48,13 @@ Future<void> main() async {
       worker.sendMessage(
           info: "Sending Buzz ${fizzBuzz.n}",
           tag: "FizzBuzz",
-          sendPort: fizzBuzzWorker.workerSendPort,
+          sendPort: fizzBuzzWorker.messageSendPort,
           data: fizzBuzz.copyWith(buzz: buzz));
     }
   });
 
   List<int> items = List.generate(100, (index) => index);
-  /*for (int i in items) {
+  */ /*for (int i in items) {
     //if fizz is divisible by 3 type fizz
     bool fizz = i % 3 == 0;
 
@@ -63,7 +63,7 @@ Future<void> main() async {
         tag: "Buzz",
         sendPort: buzzWorker.workerSendPort,
         data: FizzBuzz(i, fizz: fizz));
-  }*/
+  }*/ /*
 
   fizzbuzzManager.stateStream.listen((message) {
     print(message.name);
@@ -77,11 +77,11 @@ Future<void> main() async {
     print(event);
   });
 
-  fizzWorker.pauseMessageListening();
-  fizzWorker.resumeMessageListening();
+  fizzWorker.pauseProcessingMessage();
+  fizzWorker.resumeProcessingMessage();
   fizzWorker.pause();
   fizzWorker.resume();
   fizzWorker.cancel();
   fizzWorker.dispose();
   fizzbuzzManager.dispose();
-}
+}*/
