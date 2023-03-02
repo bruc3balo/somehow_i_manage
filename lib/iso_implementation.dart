@@ -10,14 +10,14 @@ class IWorkerImpl extends IWorker {
 }
 
 class IWorkerMessageImpl<T> extends IMessage<T> {
-  IWorkerMessageImpl(
-      {super.info,
-      super.data,
-      super.tag,
-      required super.name,
-      required super.from,
-      required super.to})
-      : super();
+  IWorkerMessageImpl({
+    super.info,
+    super.data,
+    super.tag,
+    required super.name,
+    required super.from,
+    required super.to,
+  }) : super();
 }
 
 class IWorkerDuplicateNameException extends IException {

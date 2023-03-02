@@ -50,12 +50,17 @@ class IWork<T> {
   final Future<T> Function() work;
   final Function(IWorkStatus workStatus)? onWorkStatusNotifier;
   final Function(T? result)? onResult;
+  final DateTime time = DateTime.now();
 
   //status
 
   IWorkStatus _workStatus = IWorkStatus.undone;
 
   IWorkStatus get status => _workStatus;
+
+  @override
+  int get hashCode =>
+      Object.hash(name, work, onWorkStatusNotifier, onResult, time);
 
   void setStatus(IWorkStatus status, {T? result}) {
     _workStatus = status;
@@ -67,11 +72,17 @@ class IWork<T> {
 
   @override
   String toString() => "{name : $name, status : $status}";
+
+  @override
+  bool operator ==(Object other) {
+    if (other.hashCode != hashCode) return false;
+    return super == other;
+  }
 }
 
 ///Classes
 abstract class IMessage<T> {
-  const IMessage(
+  IMessage(
       {this.info,
       this.data,
       this.tag,
@@ -85,16 +96,17 @@ abstract class IMessage<T> {
   final T? data;
   final SendPort from;
   final SendPort to;
+  final DateTime time = DateTime.now();
 
   @override
-  String toString() => "{name: $name, info: $info, tag:$tag , data: $data";
+  int get hashCode => Object.hash(time, info, tag, data, from, to, name);
 
-  Map<String, dynamic> toMap() => {
-        "name": name,
-        "info": info,
-        "tag": tag,
-        "data": data,
-      };
+  @override
+  String toString() =>
+      "{name: $name, info: $info, tag:$tag , data: $data, time: $time";
+
+  Map<String, dynamic> toMap() =>
+      {"name": name, "info": info, "tag": tag, "data": data, "time": time};
 
   static IMessage<T> createDataMessage<T>(
       {String? info,
@@ -121,6 +133,12 @@ abstract class IMessage<T> {
   }) {
     return IWorkerMessageImpl(
         info: info ?? "Error", data: data, from: from, to: to, name: name);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (other.hashCode != hashCode) return false;
+    return super == other;
   }
 
   /*
@@ -166,13 +184,7 @@ abstract class IWorker {
       : _logging = logging,
         _onReceiveMessage = onReceiveMessage,
         _onWorkerStateChange = onWorkerStateChange,
-        _onWorkerMessageStateChange = onMessageStateChange {
-    try {
-      _init();
-    } catch (e, trace) {
-      _sendError(info: e.toString(), data: trace);
-    }
-  }
+        _onWorkerMessageStateChange = onMessageStateChange;
 
   //Create Worker
   static Future<IWorker> create(String name,
@@ -181,25 +193,33 @@ abstract class IWorker {
       dynamic Function(IState state, IWorker worker)? onMessageStateChange,
       dynamic Function(IState state, IWorker worker)?
           onWorkStateChange}) async {
-    return IWorkerImpl(
+    IWorker iWorker = IWorkerImpl(
       name: name,
       logging: logging,
       onReceiveMessage: onReceiveMessage,
       onMessageStateChange: onMessageStateChange,
       onWorkerStateChange: onWorkStateChange,
     );
+
+    try {
+      await iWorker._init();
+    } catch (e, trace) {
+      iWorker._sendError(info: e.toString(), data: trace);
+    }
+    return iWorker;
   }
 
   //IWorker meta
   final String name;
   final Level _logging;
   SendPort get messageSendPort => _messageReceivePort.sendPort;
+  late SendPort _isolateSendPort;
 
   ///Messaging
+  final HashMap<int, IMessage> _ignoredMessages = HashMap();
   late final ReceivePort _messageReceivePort =
       ReceivePort("Worker ($name) : Message")
         ..takeWhile((e) => e is IMessage<dynamic>)
-            .takeWhile((_) => _messageState == IState.listen)
             .cast<IMessage<dynamic>>()
             .listen((message) => _onReceiveMessageCallback(message));
 
@@ -219,6 +239,7 @@ abstract class IWorker {
   IState _workState = IState.listen;
   IState get workState => _workState;
   final Function(IState state, IWorker worker)? _onWorkerStateChange;
+  final HashMap<int, IWork> _ignoredWork = HashMap();
 
   ///Errors
   /////todo linked list also on messages
@@ -227,27 +248,83 @@ abstract class IWorker {
 
   //messages
   void _onReceiveMessageCallback(IMessage iMessage) {
-    _workerMessages.add(iMessage);
-    _onReceiveMessage?.call(iMessage, this);
+    switch (_messageState) {
+      case IState.listen:
+        if (_ignoredMessages[iMessage.hashCode] != null) {
+          return;
+        }
+
+        _workerMessages.add(iMessage);
+        _onReceiveMessage?.call(iMessage, this);
+
+        break;
+      case IState.cancel:
+      case IState.pause:
+        _ignoredMessages.putIfAbsent(iMessage.hashCode, () => iMessage);
+        break;
+    }
   }
 
   Future<void> pauseProcessingMessage() async {
-    _messageState = IState.pause;
-    _onMessageStateChange(_messageState);
+    switch (_messageState) {
+      case IState.listen:
+        _messageState = IState.pause;
+        _onMessageStateChange(_messageState);
+        break;
+      case IState.cancel:
+        throw StreamKitCancelledException(
+            "Message processing has been cancelled");
+      case IState.pause:
+        return;
+    }
   }
 
   Future<void> resumeProcessingMessage() async {
-    _messageState = IState.listen;
-    _onMessageStateChange(_messageState);
+    switch (_messageState) {
+      case IState.listen:
+        return;
+      case IState.cancel:
+        throw StreamKitCancelledException(
+            "Message processing has been cancelled");
+      case IState.pause:
+        _messageState = IState.listen;
+        _onMessageStateChange(_messageState);
+        break;
+    }
   }
 
   Future<void> stopProcessingMessage() async {
-    _messageState = IState.cancel;
-    _onMessageStateChange(_messageState);
+    switch (_messageState) {
+      case IState.listen:
+      case IState.pause:
+        _messageState = IState.cancel;
+        _onMessageStateChange(_messageState);
+        break;
+      case IState.cancel:
+        throw StreamKitCancelledException(
+            "Message processing has already been cancelled");
+    }
+  }
+
+  Future<void> _createIsolate() async {
+    ReceivePort tempPort = ReceivePort(name);
+    Isolate.spawn<SendPort>((masterPort) async {
+      ReceivePort isolateReceivePort = ReceivePort(name);
+      masterPort.send(isolateReceivePort.sendPort);
+
+      await for (IWork work
+          in isolateReceivePort.takeWhile((e) => e is IWork)) {
+        if (_ignoredWork[work.hashCode] != null) {
+          continue;
+        }
+        _actualWork(work);
+      }
+    }, tempPort.sendPort);
+    _isolateSendPort = await tempPort.first;
+    tempPort.close();
   }
 
   //work
-
   void _actualWork<T>(IWork<T> work) {
     _logI("Starting work ${work.name}", level: _logging);
     work.setStatus(IWorkStatus.active);
@@ -270,26 +347,57 @@ abstract class IWorker {
       Function(T? result)? onResult}) async {
     IWork<T> newWork = IWork<T>(work,
         onWorkStatusNotifier: onWorkStatusNotifier, onResult: onResult);
-    await Isolate.spawn<IWork<T>>((isoWork) {
-      _actualWork<T>(isoWork);
-    }, newWork);
+
+    switch (_workState) {
+      case IState.listen:
+        _isolateSendPort.send(newWork);
+        break;
+      case IState.cancel:
+        throw StreamKitCancelledException("Work processing already cancelled");
+      case IState.pause:
+        _ignoredWork.putIfAbsent(newWork.hashCode, () => newWork);
+        break;
+    }
   }
 
   //state
 
   Future<void> pauseProcessingWork() async {
-    _workState = IState.pause;
-    _onWorkStateChange(_workState);
+    switch (_workState) {
+      case IState.listen:
+        _workState = IState.pause;
+        _onWorkStateChange(_workState);
+        break;
+      case IState.cancel:
+        throw StreamKitCancelledException("Work processing already cancelled");
+      case IState.pause:
+        return;
+    }
   }
 
-  Future<void> resume() async {
-    _workState = IState.listen;
-    _onWorkStateChange(_workState);
+  Future<void> resumeProcessingWork() async {
+    switch (_workState) {
+      case IState.listen:
+        return;
+      case IState.cancel:
+        throw StreamKitCancelledException("Work processing already cancelled");
+      case IState.pause:
+        _workState = IState.listen;
+        _onWorkStateChange(_workState);
+        break;
+    }
   }
 
-  Future<void> cancel({String initiator = "Anonymous"}) async {
-    _workState = IState.cancel;
-    _onWorkStateChange(_workState);
+  Future<void> stopProcessingWork({String initiator = "Anonymous"}) async {
+    switch (_workState) {
+      case IState.listen:
+      case IState.pause:
+        _workState = IState.cancel;
+        _onWorkStateChange(_workState);
+        break;
+      case IState.cancel:
+        throw StreamKitCancelledException("Work processing already cancelled");
+    }
   }
 
   //messages
@@ -341,8 +449,9 @@ abstract class IWorker {
   String toString() => name;
 
   //Lifecycle
-  void _init() {
+  Future<void> _init() async {
     print("Init $name worker");
+    await _createIsolate();
   }
 
   void dispose() {
