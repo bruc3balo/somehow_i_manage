@@ -20,12 +20,7 @@ class IWorkerMessageImpl<T> extends IMessage<T> {
   }) : super();
 }
 
-class IWorkerDuplicateNameException extends IException {
-  IWorkerDuplicateNameException(String message, {dynamic trace})
-      : super(message, trace: trace);
-}
-
-class StreamKitCancelledException extends IException {
-  StreamKitCancelledException(String message, {dynamic trace})
+class StreamCancelledException extends IException {
+  StreamCancelledException(String message, {dynamic trace})
       : super(message, trace: trace);
 }

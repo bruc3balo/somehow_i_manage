@@ -12,14 +12,11 @@ class FizzBuzz {
   }
 }
 
-/*Future<void> main() async {
-  IManager fizzbuzzManager =
-      IManager.create(name: "FizzBuzz Manager", logLevel: Level.info);
+Future<void> main() async {
+  IWorker fizzWorker = await IWorker.create("Fizz");
 
-  IWorker fizzWorker = await fizzbuzzManager.addWorker("Fizz");
-
-  IWorker fizzBuzzWorker = await fizzbuzzManager.addWorker("FizzBuzz",
-      onReceiveMessage: (message, worker) {
+  IWorker fizzBuzzWorker =
+      await IWorker.create("FizzBuzz", onReceiveMessage: (message, worker) {
     if (message.tag != null && message.tag == "FizzBuzz") {
       FizzBuzz n = message.data as FizzBuzz;
 
@@ -34,13 +31,11 @@ class FizzBuzz {
       }
 
       print("${n.n} : $p");
-      worker.sendMessage(
-          info: "${n.n} : $p", sendPort: fizzbuzzManager.messageSendPort);
     }
   });
 
-  IWorker buzzWorker = await fizzbuzzManager.addWorker("Buzz",
-      onReceiveMessage: (message, worker) {
+  IWorker buzzWorker =
+      await IWorker.create("Buzz", onReceiveMessage: (message, worker) {
     if (message.tag != null && message.tag == "Buzz") {
       FizzBuzz fizzBuzz = message.data as FizzBuzz;
       bool buzz = fizzBuzz.n % 5 == 0;
@@ -54,34 +49,14 @@ class FizzBuzz {
   });
 
   List<int> items = List.generate(100, (index) => index);
-  */ /*for (int i in items) {
+  for (int i in items) {
     //if fizz is divisible by 3 type fizz
     bool fizz = i % 3 == 0;
 
     fizzWorker.sendMessage(
         info: "Sending Fizz $i",
         tag: "Buzz",
-        sendPort: buzzWorker.workerSendPort,
+        sendPort: buzzWorker.messageSendPort,
         data: FizzBuzz(i, fizz: fizz));
-  }*/ /*
-
-  fizzbuzzManager.stateStream.listen((message) {
-    print(message.name);
-  });
-
-  fizzbuzzManager.messageStream.listen((event) {
-    print(event);
-  });
-
-  fizzbuzzManager.errorStream.listen((event) {
-    print(event);
-  });
-
-  fizzWorker.pauseProcessingMessage();
-  fizzWorker.resumeProcessingMessage();
-  fizzWorker.pause();
-  fizzWorker.resume();
-  fizzWorker.cancel();
-  fizzWorker.dispose();
-  fizzbuzzManager.dispose();
-}*/
+  }
+}

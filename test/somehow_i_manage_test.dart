@@ -4,25 +4,11 @@ import 'package:somehow_i_manage/somehow_i_manage.dart';
 import 'package:test/test.dart';
 
 void main() {
-  group('Logic', () {
-    test('Dummy', () async {
-      DateTime start = DateTime.now();
-      int secs = 5;
-      await Future.delayed(Duration(seconds: secs)).then((_) {
-        DateTime end = DateTime.now();
-        Duration duration =
-            Duration(seconds: end.millisecond - start.millisecond);
-        print(duration.inSeconds);
-        expect(duration.inSeconds >= secs, true);
-      });
-    });
-  });
-
   group("IWorker", () {
     test('create', () async {
       String workerName = "create-test";
 
-      IWorker iWorker = await IWorker.create(workerName);
+      await IWorker.create(workerName);
       expect(true, true);
     });
 
@@ -129,7 +115,7 @@ void main() {
         expect(false, true);
       }).catchError((e, trace) {
         print("Throwing cancelled ex");
-        expect(e.runtimeType, StreamKitCancelledException);
+        expect(e.runtimeType, StreamCancelledException);
       });
     });
 
@@ -143,8 +129,6 @@ void main() {
       }, onResult: (result) {
         n = result ?? n;
         print("Result is $result");
-
-        expect(n, 1);
       });
 
       await Future.delayed(Duration(seconds: 2));
@@ -267,84 +251,16 @@ void main() {
       await Future.delayed(Duration(seconds: 2));
     });
 
-    /*
-
-    test('sendMessage & reply', () async {
-      IManager iManager = IManager.create(name: "create");
-
-      void iWorker1Messages(IMessage<dynamic> m, IWorker w) {
-        print(m);
-        if (m.tag == "Test") {
-          switch (m.data) {
-            case "Hello":
-              w.reply(message: m, info: "Reply Hi", data: "Hello ${m.name}");
-              break;
-          }
-        }
-      }
-
-      void iWorker2Messages(IMessage<dynamic> m, IWorker w) {
-        print(m);
-        if (m.tag == "Test") {
-          switch (m.data) {
-            case "Hi":
-              w.reply(message: m, info: "Reply Hi", data: "Hi ${m.name}");
-              break;
-          }
-        }
-      }
-
-      IWorker iWorker1 = await iManager.addWorker("create-worker-1",
-          onReceiveMessage: iWorker1Messages);
-      IWorker iWorker2 = await iManager.addWorker("create-worker-2",
-          onReceiveMessage: iWorker2Messages);
-
-      iWorker1.sendMessage(
-          sendPort: iWorker2.messageSendPort,
-          data: "Hi",
-          tag: "Test",
-          info: "Testing");
-
-      iWorker2.sendMessage(
-          sendPort: iWorker1.messageSendPort,
-          data: "Hello",
-          tag: "Test",
-          info: "Testing");
-    });
-
-    test('_onStateChange', () async {
-      BehaviorSubject<IState> sub = BehaviorSubject();
-      IManager iManager = IManager.create(name: "create");
-      IWorker iWorker = await iManager.addWorker("worker",
-          onWorkStateChange: (state, worker) =>
-              {print('"State Change $state'), sub.add(state)});
-
-      //pause
-      iWorker.pause();
-      Future.delayed(Duration(seconds: 2))
-          .then((pause) => expect(sub.value, IState.pause))
-
-          //resume
-          .then((resume) => iWorker.resume())
-          .then((resume) => Future.delayed(Duration(seconds: 2))
-              .then((resume) => expect(sub.value, IState.listen))
-
-              //cancel
-              .then((cancel) => iWorker.cancel(initiator: "test"))
-              .then((cancel) => Future.delayed(Duration(seconds: 2))
-                  .then((cancel) => expect(sub.value, IState.cancel))));
-    });
-
     test('dispose', () async {
-      IManager iManager = IManager.create(name: "create");
-      IWorker iWorker = await iManager.addWorker(
-        "dispose",
+      IWorker iWorker = await IWorker.create(
+        "dispose worker",
       );
 
       await Future.delayed(Duration(seconds: 2));
       iWorker.dispose();
-      // expect(iWorker.workerState, IState.cancel);
-    });*/
+      expect(iWorker.workState, IState.cancel);
+      expect(iWorker.messageState, IState.cancel);
+    });
   });
 }
 

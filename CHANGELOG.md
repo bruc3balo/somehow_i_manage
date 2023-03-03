@@ -1,3 +1,4 @@
 ## 1.1.3
 
-- Tests for Worker
+- Able to spawn Isolate and keep it alive
+- IManager has been removed

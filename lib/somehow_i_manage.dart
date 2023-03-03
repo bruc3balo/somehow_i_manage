@@ -4,42 +4,14 @@
 library somehow_i_manage;
 
 export 'src/somehow_i_manage_base.dart';
-export 'package:logger/logger.dart';
 
 import 'dart:async';
 import 'dart:collection';
 import 'dart:isolate';
-import 'package:rxdart/rxdart.dart';
+import 'package:logging/logging.dart';
 import 'package:somehow_i_manage/somehow_i_manage.dart';
-// import 'package:rxdart/rxdart.dart';
 
 import 'iso_implementation.dart';
-
-var _log = Logger();
-
-void _logI(String message, {dynamic error, Level level = Level.nothing}) {
-  switch (level) {
-    case Level.verbose:
-      _log.v(message, [null, error]);
-      break;
-    case Level.debug:
-      _log.d(message, [null, error]);
-      break;
-    case Level.nothing:
-    case Level.info:
-      _log.i(message, [null, error]);
-      break;
-    case Level.warning:
-      _log.w(message, [null, error]);
-      break;
-    case Level.error:
-      _log.e(message, [null, error]);
-      break;
-    case Level.wtf:
-      _log.wtf(message, [null, error]);
-      break;
-  }
-}
 
 ///Work
 class IWork<T> {
@@ -81,7 +53,7 @@ class IWork<T> {
 }
 
 ///Classes
-abstract class IMessage<T> {
+abstract class IMessage<T> extends LinkedListEntry<IMessage<T>> {
   IMessage(
       {this.info,
       this.data,
@@ -140,38 +112,6 @@ abstract class IMessage<T> {
     if (other.hashCode != hashCode) return false;
     return super == other;
   }
-
-  /*
-
-    static IMessage<IState> _cancel(
-        {required String name, required SendPort from, required SendPort to}) {
-      return IWorkerMessageImpl<IState>(
-          info: "Stopping worker $name",
-          data: IState.cancel,
-          from: from,
-          to: to,
-          name: name);
-    }
-
-    static IMessage<IState> _pause(
-        {required String name, required SendPort from, required SendPort to}) {
-      return IWorkerMessageImpl<IState>(
-          info: "Pausing worker $name",
-          data: IState.pause,
-          from: from,
-          to: to,
-          name: name);
-    }
-
-    static IMessage<IState> _resume(
-        {required String name, required SendPort from, required SendPort to}) {
-      return IWorkerMessageImpl(
-          info: "Resuming worker $name",
-          data: IState.listen,
-          from: from,
-          to: to,
-          name: name);
-    }*/
 }
 
 abstract class IWorker {
@@ -188,7 +128,7 @@ abstract class IWorker {
 
   //Create Worker
   static Future<IWorker> create(String name,
-      {Level logging = Level.nothing,
+      {Level logging = Level.ALL,
       dynamic Function(IMessage<dynamic>, IWorker worker)? onReceiveMessage,
       dynamic Function(IState state, IWorker worker)? onMessageStateChange,
       dynamic Function(IState state, IWorker worker)?
@@ -223,15 +163,15 @@ abstract class IWorker {
             .cast<IMessage<dynamic>>()
             .listen((message) => _onReceiveMessageCallback(message));
 
-  //list
-  final List<IMessage<dynamic>> _workerMessages = [];
-  List<IMessage<dynamic>> get workerMessages => _workerMessages;
+  //List
+  final LinkedList<IMessage<dynamic>> _workerMessages = LinkedList();
+  List<IMessage<dynamic>> get workerMessages => _workerMessages.toList();
 
-  //state
+  ///State
   IState _messageState = IState.listen;
   IState get messageState => _messageState;
 
-  //callback
+  ///Callbacks
   final Function(IMessage<dynamic> message, IWorker worker)? _onReceiveMessage;
   final Function(IState state, IWorker worker)? _onWorkerMessageStateChange;
 
@@ -242,9 +182,12 @@ abstract class IWorker {
   final HashMap<int, IWork> _ignoredWork = HashMap();
 
   ///Errors
-  /////todo linked list also on messages
-  final List<IMessage> _workerErrors = [];
-  List<IMessage> get allErrors => _workerErrors;
+  //List
+  final LinkedList<IMessage> _workerErrors = LinkedList();
+  List<IMessage> get allErrors => _workerErrors.toList();
+
+  late final Logger _log = Logger(name);
+  late StreamSubscription<LogRecord> sub;
 
   //messages
   void _onReceiveMessageCallback(IMessage iMessage) {
@@ -272,8 +215,7 @@ abstract class IWorker {
         _onMessageStateChange(_messageState);
         break;
       case IState.cancel:
-        throw StreamKitCancelledException(
-            "Message processing has been cancelled");
+        throw StreamCancelledException("Message processing has been cancelled");
       case IState.pause:
         return;
     }
@@ -284,8 +226,7 @@ abstract class IWorker {
       case IState.listen:
         return;
       case IState.cancel:
-        throw StreamKitCancelledException(
-            "Message processing has been cancelled");
+        throw StreamCancelledException("Message processing has been cancelled");
       case IState.pause:
         _messageState = IState.listen;
         _onMessageStateChange(_messageState);
@@ -301,7 +242,7 @@ abstract class IWorker {
         _onMessageStateChange(_messageState);
         break;
       case IState.cancel:
-        throw StreamKitCancelledException(
+        throw StreamCancelledException(
             "Message processing has already been cancelled");
     }
   }
@@ -312,6 +253,7 @@ abstract class IWorker {
       ReceivePort isolateReceivePort = ReceivePort(name);
       masterPort.send(isolateReceivePort.sendPort);
 
+      //todo close isolate
       await for (IWork work
           in isolateReceivePort.takeWhile((e) => e is IWork)) {
         if (_ignoredWork[work.hashCode] != null) {
@@ -319,26 +261,45 @@ abstract class IWorker {
         }
         _actualWork(work);
       }
+
+      _log.info("Isolate exit");
     }, tempPort.sendPort);
     _isolateSendPort = await tempPort.first;
     tempPort.close();
   }
 
+  void _addLogListener() {
+    sub = _log.onRecord.listen((record) {
+      print('${record.level.name}: ${record.time}: ${record.message}');
+    });
+  }
+
+  void _removeLogListener() {
+    sub.cancel();
+  }
+
   //work
   void _actualWork<T>(IWork<T> work) {
-    _logI("Starting work ${work.name}", level: _logging);
+    _log.info("Starting work ${work.name}");
     work.setStatus(IWorkStatus.active);
     work.work.call().then((result) {
-      _logI("Finished work ${work.name}", level: _logging);
+      _log.info("Finished work ${work.name}");
       work.setStatus(IWorkStatus.success, result: result);
     }).catchError((e, trace) {
       work.setStatus(IWorkStatus.failed);
-      _logI("Failed work ${work.name}", error: trace, level: Level.error);
+      _log.severe("Failed work ${work.name}");
+      _log.severe(e.toString());
+      _log.severe(trace.toString());
     });
   }
 
   void _removeWorkListener() {
     _workState = IState.cancel;
+    _messageReceivePort.close();
+  }
+
+  void _removeMessageListener() {
+    _messageState = IState.cancel;
     _messageReceivePort.close();
   }
 
@@ -353,7 +314,7 @@ abstract class IWorker {
         _isolateSendPort.send(newWork);
         break;
       case IState.cancel:
-        throw StreamKitCancelledException("Work processing already cancelled");
+        throw StreamCancelledException("Work processing already cancelled");
       case IState.pause:
         _ignoredWork.putIfAbsent(newWork.hashCode, () => newWork);
         break;
@@ -369,7 +330,7 @@ abstract class IWorker {
         _onWorkStateChange(_workState);
         break;
       case IState.cancel:
-        throw StreamKitCancelledException("Work processing already cancelled");
+        throw StreamCancelledException("Work processing already cancelled");
       case IState.pause:
         return;
     }
@@ -380,7 +341,7 @@ abstract class IWorker {
       case IState.listen:
         return;
       case IState.cancel:
-        throw StreamKitCancelledException("Work processing already cancelled");
+        throw StreamCancelledException("Work processing already cancelled");
       case IState.pause:
         _workState = IState.listen;
         _onWorkStateChange(_workState);
@@ -396,7 +357,7 @@ abstract class IWorker {
         _onWorkStateChange(_workState);
         break;
       case IState.cancel:
-        throw StreamKitCancelledException("Work processing already cancelled");
+        throw StreamCancelledException("Work processing already cancelled");
     }
   }
 
@@ -450,13 +411,16 @@ abstract class IWorker {
 
   //Lifecycle
   Future<void> _init() async {
-    print("Init $name worker");
+    _addLogListener();
+    _log.info("Init $name worker");
     await _createIsolate();
   }
 
   void dispose() {
+    _log.info("$name disposing");
+    _removeLogListener();
     _removeWorkListener();
-    _logI("$name disposing", level: _logging);
+    _removeMessageListener();
   }
 }
 
